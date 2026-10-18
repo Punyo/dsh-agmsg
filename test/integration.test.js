@@ -94,8 +94,8 @@ test('bridge streams a message into the session agent with its exact body', { sk
     log: silentLogger(),
     agent: () => agent,
     detached: op => op(),
-    toast: () => ({ show: text => toasts.push(text) }),
-    status: () => ({ set: () => () => {} }),
+    notify: text => toasts.push(text),
+    setStatus: () => true,
   })
   try {
     await client.join('btest', 'carol', project)
@@ -139,8 +139,8 @@ test('a second session cannot hold the same identity at once', { skip }, async (
     log: silentLogger(),
     agent: () => agent,
     detached: op => op(),
-    toast: () => undefined,
-    status: () => undefined,
+    notify: () => {},
+    setStatus: () => false,
   })
   const a = new Bridge(client, resolveConfig({}), host(first.agent))
   const b = new Bridge(client, resolveConfig({}), host(second.agent))

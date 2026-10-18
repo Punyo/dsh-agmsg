@@ -13,7 +13,7 @@ import type { ChildProcess } from 'node:child_process'
 import { AgmsgClient, type StoredMessage } from './agmsg.js'
 import type { ResolvedConfig } from './config.js'
 import { formatDelivery, preview, type InboundMessage } from './format.js'
-import { isRootAgent, type Agent, type Logger, type TuiStatus, type TuiToast, type UserMessage } from './host.js'
+import { isRootAgent, type Agent, type Logger, type UserMessage } from './host.js'
 import { escapeBody, LineSplitter, parseWatchLine, unescapeBody, type WatchMessage } from './watch-line.js'
 
 export type WatchState = 'off' | 'starting' | 'watching' | 'retrying' | 'failed' | 'stopped'
@@ -52,15 +52,16 @@ export interface BridgeHost {
   agent(sessionId: string): Agent | undefined
   /** Run outside any tool-call initiator, as dsh's own timers do. */
   detached<T>(op: () => T): T
-  toast(): TuiToast | undefined
-  status(): TuiStatus | undefined
+  /** Show a transient notice (dsh-TUI toast) when a TUI is present. */
+  notify(text: string, options?: { color?: 'success' | 'warning' | 'error', timeoutMs?: number }): void
+  /** Publish or clear this plugin's status-line text; false when no TUI. */
+  setStatus(text: string | undefined): boolean
 }
 
 /** Watcher restarts before a seat is marked failed. */
 const MAX_FAILURES = 6
 /** A watcher alive this long is considered healthy. */
 const HEALTHY_AFTER_MS = 2_000
-const STATUS_KEY = 'agmsg'
 
 export function projectOf(agent: Agent): string {
   return agent.session.header.cwd ?? process.cwd()
@@ -81,7 +82,6 @@ function userMessage(text: string, summary: string): UserMessage {
 
 export class Bridge {
   private readonly seats = new Map<string, Seat>()
-  private statusDispose: (() => void) | undefined
   private disposed = false
 
   constructor(
@@ -212,8 +212,7 @@ export class Bridge {
   dispose(): void {
     this.disposed = true
     for (const sessionId of [...this.seats.keys()]) this.detach(sessionId)
-    this.statusDispose?.()
-    this.statusDispose = undefined
+    this.host.setStatus(undefined)
   }
 
   private bind(agent: Agent, name: string, teams: string[]): void {
@@ -335,7 +334,7 @@ export class Bridge {
       seat.state = 'failed'
       seat.detail = `watcher stopped (${why})${seat.detail === undefined ? '' : `: ${seat.detail}`}`
       this.host.log.warn('agmsg: giving up on the watcher for %s: %s', seat.name, seat.detail)
-      this.host.toast()?.show(`agmsg: delivery for ${seat.name} stopped (${why}); /agmsg attach retries`, { color: 'warning' })
+      this.host.notify(`agmsg: delivery for ${seat.name} stopped (${why}); /agmsg attach retries`, { color: 'warning' })
       this.updateStatus()
       return
     }
@@ -368,7 +367,7 @@ export class Bridge {
       const text = messages.length === 1
         ? `agmsg ${first.from} → ${first.to}: ${preview(first.body)}`
         : `agmsg: ${messages.length} messages from ${senders.join(', ')}`
-      this.host.toast()?.show(text, { timeoutMs: 6_000 })
+      this.host.notify(text, { timeoutMs: 6_000 })
     }
     this.updateStatus()
   }
@@ -404,18 +403,19 @@ export class Bridge {
     })
   }
 
+  /** Re-publish the status line, e.g. once the TUI's status service appears. */
+  refreshStatus(): void {
+    this.updateStatus()
+  }
+
   private updateStatus(): void {
     if (!this.config.statusLine) return
-    const status = this.host.status()
-    if (status === undefined) return
     const seat = [...this.seats.values()].at(-1)
     if (seat === undefined) {
-      this.statusDispose?.()
-      this.statusDispose = undefined
-      status.set(STATUS_KEY, undefined)
+      this.host.setStatus(undefined)
       return
     }
     const state = seat.state === 'watching' || seat.state === 'off' ? '' : ` (${seat.state})`
-    this.statusDispose = status.set(STATUS_KEY, `agmsg ${seat.name}@${seat.teams.join(',')}${state}`) ?? this.statusDispose
+    this.host.setStatus(`agmsg ${seat.name}@${seat.teams.join(',')}${state}`)
   }
 }

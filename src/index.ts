@@ -10,13 +10,15 @@
  *   output when those optional services are present.
  * @module dsh-agmsg
  */
-import { readFileSync } from 'node:fs'
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { appendFileSync, readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { formatWithOptions } from 'node:util'
 import { AgmsgClient, defaultHome } from './agmsg.js'
 import { Bridge } from './bridge.js'
 import { createCommand } from './command.js'
 import { Config, resolveConfig } from './config.js'
-import type { HostContext } from './host.js'
+import type { HostContext, Logger } from './host.js'
 import { isRootAgent } from './host.js'
 import { createTools } from './tools.js'
 
@@ -26,6 +28,8 @@ export type { Delivery } from './config.js'
 export const name = 'dsh-agmsg'
 
 export const inject = ['tools', 'agents', 'commands']
+
+const STATUS_KEY = 'agmsg'
 
 const SKILL_PATH = fileURLToPath(new URL('../skills/dsh-agmsg/SKILL.md', import.meta.url))
 
@@ -51,24 +55,75 @@ function registerSkill(ctx: HostContext): void {
 }
 
 /**
+ * The plugin's logger. dsh-TUI owns the terminal, so `DSH_AGMSG_DEBUG=<file>`
+ * additionally appends every entry to that file for troubleshooting.
+ */
+function createLogger(ctx: HostContext): Logger {
+  const base = ctx.logger('agmsg')
+  const file = process.env.DSH_AGMSG_DEBUG
+  if (file === undefined || file === '') return base
+  const write = (level: string, format: string, args: unknown[]) => {
+    try {
+      appendFileSync(file, `${new Date().toISOString()} ${level} ${formatWithOptions({ breakLength: Infinity }, format, ...args)}\n`)
+    } catch {
+      // Debug output must never break the plugin.
+    }
+  }
+  return {
+    info: (format, ...args) => { write('info', format, args); base.info(format, ...args) },
+    warn: (format, ...args) => { write('warn', format, args); base.warn(format, ...args) },
+    error: (format, ...args) => { write('error', format, args); base.error(format, ...args) },
+    debug: (format, ...args) => { write('debug', format, args); base.debug(format, ...args) },
+  }
+}
+
+/**
  * Wire the plugin.
  * @param ctx - cordis context with dsh's tools, agents and commands services.
  * @param config - validated plugin config.
  */
 export function apply(ctx: HostContext, config: Config = {}): void {
   const resolved = resolveConfig(config)
-  const log = ctx.logger('agmsg')
+  const log = createLogger(ctx)
   const client = new AgmsgClient({
     home: resolved.agmsgHome === '' ? defaultHome() : resolved.agmsgHome,
     storagePath: resolved.storagePath,
   })
+  // dsh-TUI admits a status/toast write only from the calling plugin's own
+  // activation: it tracks the running activation in AsyncLocalStorage and
+  // refuses a write made while another plugin's (or the TUI row's) activation
+  // is current, which is the case inside agent events and watcher callbacks.
+  // Capture this activation once and make every TUI write from it.
+  const inOwnActivation = AsyncLocalStorage.snapshot()
+  let statusDispose: (() => void) | undefined
   const bridge = new Bridge(client, resolved, {
     log,
     agent: id => ctx.agents.get(id),
     detached: op => ctx.agents.withoutInitiator(op),
-    toast: () => ctx.get('tuiToast', false),
-    status: () => ctx.get('tuiStatus', false),
+    notify: (text, options) => inOwnActivation(() => {
+      ctx.get('tuiToast', false)?.show(text, options)
+    }),
+    setStatus: text => inOwnActivation(() => {
+      const status = ctx.get('tuiStatus', false)
+      if (status === undefined) return false
+      if (text === undefined) {
+        statusDispose?.()
+        statusDispose = undefined
+        status.set(STATUS_KEY, undefined)
+        return true
+      }
+      statusDispose = status.set(STATUS_KEY, text) ?? statusDispose
+      return true
+    }),
   })
+
+  // dsh-TUI's status service can come up after this row; publish once it
+  // does. A soft inject: without dsh-TUI the callback never runs.
+  if (resolved.statusLine) {
+    ctx.inject(['tuiStatus'], () => {
+      bridge.refreshStatus()
+    })
+  }
 
   if (!client.installed()) log.warn('agmsg: no agmsg install at %s; tools will report how to install it', client.home)
 
@@ -83,7 +138,6 @@ export function apply(ctx: HostContext, config: Config = {}): void {
   ctx.on('agent/disposed', ({ agent }) => {
     bridge.onAgentDisposed(agent)
   })
-
   // The TUI may have opened its session before this row activated.
   for (const agent of ctx.agents.list()) {
     if (isRootAgent(agent)) void bridge.onAgentCreated(agent)

@@ -144,6 +144,8 @@ export interface HostContext {
   on(event: 'agent/created', listener: (event: AgentCreatedEvent) => unknown): () => void
   on(event: 'agent/disposed', listener: (event: AgentDisposedEvent) => unknown): () => void
   effect(factory: () => () => void, label?: string): void
+  /** Run `callback` in a child fiber once every named service is available. */
+  inject(deps: string[], callback: (ctx: HostContext) => void): unknown
 }
 
 /** True for a top-level session; subagent children never hold a seat. */
