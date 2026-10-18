@@ -1,25 +1,18 @@
-/** The `/agmsg` slash command: the person's direct control surface. */
+/**
+ * The `/agmsg` slash command: the person's direct control surface.
+ *
+ * dsh-TUI shows a command's result on one line, so every result is a single
+ * line with the essentials first; full listings stay with the model tools.
+ */
 import { execFile } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import type { Bridge } from './bridge.js'
-import { projectOf } from './bridge.js'
 import type { CommandDefinition, CommandResult } from './host.js'
-import { describeSeat, notInstalled, unknownTypeHint } from './text.js'
+import { notInstalled, oneLine, seatLine, unknownTypeHint } from './text.js'
 
 const INSTALLER = fileURLToPath(new URL('../scripts/install-agmsg-type.sh', import.meta.url))
 
-const USAGE = [
-  '/agmsg                       show this session\'s identity and delivery state',
-  '/agmsg setup                 register the dsh agent type with agmsg (once per agmsg install)',
-  '/agmsg join <team> <name>    join or create a team as <name> and start receiving',
-  '/agmsg attach [name]         re-attach this project\'s dsh identity / restart delivery',
-  '/agmsg detach                stop receiving in this session (membership stays)',
-  '/agmsg send <to> <message>   send a message (use <team>:<to> to pick a team)',
-  '/agmsg inbox                 read and mark unread messages',
-  '/agmsg members [team]        list team members',
-  '/agmsg history [limit]       recent history',
-  '/agmsg leave [team]          leave a team (removes this agent name from it)',
-].join('\n')
+const USAGE = '/agmsg [status] · setup · join <team> <name> · attach [name] · detach · send <to|team:to> <message> · inbox · members [team] · history [limit] · leave [team]'
 
 function ok(text: string): CommandResult {
   return { kind: 'success', text }
@@ -42,7 +35,7 @@ export function createCommand(bridge: Bridge): CommandDefinition {
   return {
     name: 'agmsg',
     description: 'agmsg team messaging: status, setup, join, send, inbox, members, history',
-    input: { hint: '[status|setup|join <team> <name>|attach|detach|send <to> <message>|inbox|members|history|leave|help]' },
+    input: { hint: 'status|setup|join <team> <name>|attach|detach|send <to> <message>|inbox|members|history|leave|help' },
     async handler({ agent, rawInput }) {
       const input = rawInput.trim()
       const space = input.search(/\s/)
@@ -56,7 +49,7 @@ export function createCommand(bridge: Bridge): CommandDefinition {
       if (sub === 'setup') {
         if (!client.installed()) return fail(notInstalled(client.home))
         const result = await runInstaller(client.home)
-        return result.code === 0 ? ok(result.output) : fail(result.output)
+        return result.code === 0 ? ok(oneLine(result.output)) : fail(oneLine(result.output))
       }
       if (!client.installed()) return fail(notInstalled(client.home))
 
@@ -64,29 +57,30 @@ export function createCommand(bridge: Bridge): CommandDefinition {
         switch (sub) {
           case '':
           case 'status':
-            return ok(describeSeat(bridge.info(sessionId), projectOf(agent)))
+            bridge.refreshStatus()
+            return ok(seatLine(bridge.info(sessionId)))
           case 'join': {
             if (words.length !== 2) return fail('usage: /agmsg join <team> <name>')
-            const output = await bridge.join(agent, words[0]!, words[1]!)
-            return ok(`${output}\n${describeSeat(bridge.info(sessionId), projectOf(agent))}`)
+            await bridge.join(agent, words[0]!, words[1]!)
+            return ok(seatLine(bridge.info(sessionId)))
           }
           case 'attach': {
             const seat = bridge.info(sessionId)
             if (seat !== undefined && (words[0] === undefined || words[0] === seat.name)) {
               bridge.restart(sessionId)
-              return ok(`Restarted delivery for ${seat.name}.`)
+              return ok(`agmsg: restarted delivery for ${seat.name}`)
             }
             const result = await bridge.attachExisting(agent, words[0])
             return result.attached === undefined
-              ? fail(`${result.reason}. Use /agmsg join <team> <name>.`)
-              : ok(describeSeat(bridge.info(sessionId), projectOf(agent)))
+              ? fail(`agmsg: ${result.reason} · /agmsg join <team> <name>`)
+              : ok(seatLine(bridge.info(sessionId)))
           }
           case 'detach':
-            return bridge.detach(sessionId) ? ok('Stopped agmsg delivery for this session.') : fail('This session is not attached.')
+            return bridge.detach(sessionId) ? ok('agmsg: stopped delivery for this session') : fail('agmsg: this session is not attached')
           case 'send': {
             if (words.length < 2) return fail('usage: /agmsg send <to> <message>')
             const target = words[0]!
-            const body = rest.slice(rest.indexOf(target) + target.length).trim()
+            const body = rest.slice(target.length).trim()
             const colon = target.indexOf(':')
             const to = colon < 0 ? target : target.slice(colon + 1)
             const { name, team } = bridge.teamFor(sessionId, colon < 0 ? undefined : target.slice(0, colon))
@@ -94,23 +88,24 @@ export function createCommand(bridge: Bridge): CommandDefinition {
           }
           case 'inbox': {
             const seat = bridge.info(sessionId)
-            if (seat === undefined) return fail('This session has not joined a team. Use /agmsg join <team> <name>.')
+            if (seat === undefined) return fail('agmsg: not joined · /agmsg join <team> <name>')
             const parts: string[] = []
-            for (const team of seat.teams) parts.push(`[${team}] ${await client.inbox(team, seat.name)}`)
-            return ok(parts.join('\n\n'))
+            for (const team of seat.teams) parts.push(`[${team}] ${oneLine(await client.inbox(team, seat.name))}`)
+            return ok(parts.join(' · '))
           }
           case 'members': {
             const { team } = bridge.teamFor(sessionId, words[0])
             const members = await client.members(team)
-            return ok([`Team ${team}:`, ...members.map(member => `- ${member.name} (${member.types.join(', ')})`)].join('\n'))
+            return ok(`${team}: ${members.map(member => `${member.name} (${member.types.join(', ')})`).join(', ') || 'no members'}`)
           }
           case 'history': {
             const seat = bridge.info(sessionId)
-            if (seat === undefined) return fail('This session has not joined a team.')
-            const limit = Number.parseInt(words[0] ?? '20', 10)
+            if (seat === undefined) return fail('agmsg: not joined · /agmsg join <team> <name>')
+            const parsed = Number.parseInt(words[0] ?? '5', 10)
+            const limit = Number.isFinite(parsed) && parsed > 0 ? parsed : 5
             const parts: string[] = []
-            for (const team of seat.teams) parts.push(await client.history(team, seat.name, Number.isFinite(limit) && limit > 0 ? limit : 20))
-            return ok(parts.join('\n\n'))
+            for (const team of seat.teams) parts.push(`[${team}] ${oneLine(await client.history(team, seat.name, limit))}`)
+            return ok(parts.join(' · '))
           }
           case 'leave': {
             const { name, team } = bridge.teamFor(sessionId, words[0])
@@ -118,14 +113,14 @@ export function createCommand(bridge: Bridge): CommandDefinition {
             const seat = bridge.info(sessionId)
             if (seat !== undefined && seat.teams.length <= 1) bridge.detach(sessionId)
             else if (seat !== undefined) await bridge.attachExisting(agent, name)
-            return ok(output)
+            return ok(oneLine(output))
           }
           default:
-            return fail(`unknown subcommand "${sub}"\n${USAGE}`)
+            return fail(`agmsg: unknown subcommand "${sub}" · ${USAGE}`)
         }
       } catch (error) {
-        const message = (error as Error).message
-        return fail(/Unknown agent type/.test(message) ? `${message}\n${unknownTypeHint()}` : message)
+        const message = oneLine((error as Error).message)
+        return fail(/Unknown agent type/.test(message) ? `${message} · ${unknownTypeHint()}` : message)
       }
     },
   }

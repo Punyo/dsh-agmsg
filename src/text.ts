@@ -19,6 +19,30 @@ export function describeSeat(seat: SeatInfo | undefined, project: string): strin
   ].join('\n')
 }
 
+const STATE_SHORT: Record<SeatInfo['state'], string> = {
+  off: 'delivery off',
+  starting: 'starting',
+  watching: 'receiving',
+  retrying: 'restarting',
+  failed: 'delivery stopped',
+  stopped: 'stopped',
+}
+
+/**
+ * One-line seat summary for `/agmsg`: dsh-TUI shows a command result on a
+ * single line, so everything that matters goes first.
+ */
+export function seatLine(seat: SeatInfo | undefined): string {
+  if (seat === undefined) return 'agmsg: not joined · /agmsg join <team> <name>'
+  const detail = seat.detail === undefined || seat.state === 'watching' ? '' : ` (${seat.detail})`
+  return `agmsg: ${seat.name}@${seat.teams.join(',')} · ${STATE_SHORT[seat.state]}${detail} · ${seat.delivered} delivered`
+}
+
+/** Collapse multi-line script output into one line. */
+export function oneLine(text: string): string {
+  return text.split('\n').map(line => line.trim()).filter(Boolean).join(' · ')
+}
+
 export function notInstalled(home: string): string {
   return `agmsg is not installed at ${home}. Install it with \`npx agmsg\`, or set the plugin's agmsgHome option.`
 }

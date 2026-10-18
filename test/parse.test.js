@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { parseJsonl, parseWhoami } from '../lib/agmsg.js'
 import { deliveryMessage } from '../lib/bridge.js'
+import { oneLine, seatLine } from '../lib/text.js'
 import { formatDelivery, preview } from '../lib/format.js'
 import { escapeBody, LineSplitter, parseWatchLine, unescapeBody } from '../lib/watch-line.js'
 
@@ -68,4 +69,13 @@ test('deliveryMessage frames a relay the way dsh-TUI labels team messages', () =
   assert.deepEqual(notice.source, { kind: 'agmsg', form: 'notice', summary: 'agmsg: message from alice' })
   assert.equal(notice.content.length, 1)
   assert.notEqual(notice.id, relay.id)
+})
+
+test('seatLine and oneLine keep command output on one line', () => {
+  assert.equal(seatLine(undefined), 'agmsg: not joined · /agmsg join <team> <name>')
+  assert.equal(
+    seatLine({ sessionId: 's', project: '/p', name: 'bob', teams: ['t'], state: 'watching', delivered: 2 }),
+    'agmsg: bob@t · receiving · 2 delivered',
+  )
+  assert.equal(oneLine('a\n\n  b \nc'), 'a · b · c')
 })
