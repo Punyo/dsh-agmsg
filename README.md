@@ -34,7 +34,7 @@ Claude Code ──/agmsg send──▶ agmsg store (SQLite) ──watch.sh──
    dsh plugin --profile dsh-tui add github:Punyo/dsh-agmsg
    ```
 
-   Restart dsh-TUI afterwards.
+   Restart dsh-TUI afterwards. pnpm may report `Agent skills awaiting approval: dsh-agmsg`. That notice concerns pnpm linking the package's `skills/` folder into agent skill directories. The plugin does not need it: it registers its bundled skill with dsh at runtime.
 
 2. Register the `dsh` agent type with agmsg. You do this once per agmsg install. In dsh-TUI:
 
