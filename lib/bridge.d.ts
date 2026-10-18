@@ -1,6 +1,8 @@
 import { AgmsgClient } from './agmsg.js';
 import type { ResolvedConfig } from './config.js';
-import { type Agent, type Logger, type TuiStatus, type TuiToast } from './host.js';
+import { type InboundMessage } from './format.js';
+export type { InboundMessage };
+import { type Agent, type Logger, type UserMessage } from './host.js';
 export type WatchState = 'off' | 'starting' | 'watching' | 'retrying' | 'failed' | 'stopped';
 export interface SeatInfo {
     readonly sessionId: string;
@@ -17,16 +19,30 @@ export interface BridgeHost {
     agent(sessionId: string): Agent | undefined;
     /** Run outside any tool-call initiator, as dsh's own timers do. */
     detached<T>(op: () => T): T;
-    toast(): TuiToast | undefined;
-    status(): TuiStatus | undefined;
+    /** Show a transient notice (dsh-TUI toast) when a TUI is present. */
+    notify(text: string, options?: {
+        color?: 'success' | 'warning' | 'error';
+        timeoutMs?: number;
+    }): void;
+    /** Publish or clear this plugin's status-line text; false when no TUI. */
+    setStatus(text: string | undefined): boolean;
 }
 export declare function projectOf(agent: Agent): string;
+/**
+ * Build the user message for one delivery batch.
+ *
+ * `relay` borrows dsh's adjacent-agent relay attribution (`agent-message` /
+ * `relay`) with a leading `Team message from <label>:` block, the shape
+ * dsh-TUI renders as a labelled bubble; the sender id is a synthetic
+ * `agmsg:<team>/<name>` because the sender is not a dsh session. `notice` is
+ * a plugin-owned source that dsh-TUI keeps out of the transcript.
+ */
+export declare function deliveryMessage(messages: readonly InboundMessage[], display: 'relay' | 'notice'): UserMessage;
 export declare class Bridge {
     readonly client: AgmsgClient;
     readonly config: ResolvedConfig;
     private readonly host;
     private readonly seats;
-    private statusDispose;
     private disposed;
     constructor(client: AgmsgClient, config: ResolvedConfig, host: BridgeHost);
     info(sessionId: string): SeatInfo | undefined;
@@ -71,5 +87,7 @@ export declare class Bridge {
     private flush;
     /** Swap each escaped watch body for the stored original when it can be matched. */
     private resolveBodies;
+    /** Re-publish the status line, e.g. once the TUI's status service appears. */
+    refreshStatus(): void;
     private updateStatus;
 }

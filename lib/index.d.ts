@@ -1,7 +1,7 @@
 import { Config } from './config.js';
 import type { HostContext } from './host.js';
 export { Config };
-export type { Delivery } from './config.js';
+export type { Delivery, Display } from './config.js';
 export declare const name = "dsh-agmsg";
 export declare const inject: string[];
 /**
