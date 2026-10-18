@@ -23,7 +23,7 @@ import { isRootAgent } from './host.js'
 import { createTools } from './tools.js'
 
 export { Config }
-export type { Delivery } from './config.js'
+export type { Delivery, Display } from './config.js'
 
 export const name = 'dsh-agmsg'
 

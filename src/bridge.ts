@@ -13,6 +13,7 @@ import type { ChildProcess } from 'node:child_process'
 import { AgmsgClient, type StoredMessage } from './agmsg.js'
 import type { ResolvedConfig } from './config.js'
 import { formatDelivery, preview, type InboundMessage } from './format.js'
+export type { InboundMessage }
 import { isRootAgent, type Agent, type Logger, type UserMessage } from './host.js'
 import { escapeBody, LineSplitter, parseWatchLine, unescapeBody, type WatchMessage } from './watch-line.js'
 
@@ -67,16 +68,43 @@ export function projectOf(agent: Agent): string {
   return agent.session.header.cwd ?? process.cwd()
 }
 
-function userMessage(text: string, summary: string): UserMessage {
+function freezeMessage(texts: readonly string[], source: UserMessage['source']): UserMessage {
   return Object.freeze({
     id: randomUUID(),
     role: 'user' as const,
-    content: Object.freeze([Object.freeze({ type: 'text' as const, text })]),
-    source: Object.freeze({
-      kind: 'agmsg',
-      form: 'notice' as const,
-      summary: summary.length <= 120 ? summary : `${summary.slice(0, 119)}…`,
-    }),
+    content: Object.freeze(texts.map(text => Object.freeze({ type: 'text' as const, text }))),
+    source: Object.freeze(source),
+  })
+}
+
+/**
+ * Build the user message for one delivery batch.
+ *
+ * `relay` borrows dsh's adjacent-agent relay attribution (`agent-message` /
+ * `relay`) with a leading `Team message from <label>:` block, the shape
+ * dsh-TUI renders as a labelled bubble; the sender id is a synthetic
+ * `agmsg:<team>/<name>` because the sender is not a dsh session. `notice` is
+ * a plugin-owned source that dsh-TUI keeps out of the transcript.
+ */
+export function deliveryMessage(messages: readonly InboundMessage[], display: 'relay' | 'notice'): UserMessage {
+  const first = messages[0]!
+  const body = formatDelivery(messages)
+  const senders = [...new Set(messages.map(message => message.from))]
+  if (display === 'relay') {
+    const label = `${senders.join(', ')} (agmsg ${[...new Set(messages.map(message => message.team))].join(', ')})`
+    return freezeMessage([`Team message from ${label}:`, body], {
+      kind: 'agent-message',
+      form: 'relay',
+      senderSessionId: `agmsg:${first.team}/${first.from}`,
+    })
+  }
+  const summary = messages.length === 1
+    ? `agmsg: message from ${first.from}`
+    : `agmsg: ${messages.length} messages from ${senders.join(', ')}`
+  return freezeMessage([body], {
+    kind: 'agmsg',
+    form: 'notice',
+    summary: summary.length <= 120 ? summary : `${summary.slice(0, 119)}…`,
   })
 }
 
@@ -352,10 +380,7 @@ export class Bridge {
     const agent = this.host.agent(seat.sessionId) ?? seat.agent
     const first = messages[0]!
     const senders = [...new Set(messages.map(message => message.from))]
-    const summary = messages.length === 1
-      ? `agmsg: message from ${first.from}`
-      : `agmsg: ${messages.length} messages from ${senders.join(', ')}`
-    const message = userMessage(formatDelivery(messages), summary)
+    const message = deliveryMessage(messages, this.config.display)
     this.host.detached(() => {
       if (this.config.delivery === 'inject') agent.inject(message)
       else if (agent.status === 'idle') agent.followup(message)

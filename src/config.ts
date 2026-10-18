@@ -2,6 +2,8 @@ import z from '@deepseek-ai/schemastery'
 
 export type Delivery = 'wake' | 'inject' | 'off'
 
+export type Display = 'relay' | 'notice'
+
 /** Plugin configuration; every key has a default so a bare row works. */
 export interface Config {
   /** agmsg install directory. Empty means `~/.agents/skills/agmsg`. */
@@ -20,6 +22,12 @@ export interface Config {
    * `off` runs no watcher (use agmsg_inbox manually).
    */
   delivery?: Delivery
+  /**
+   * How a delivered message is attributed. `relay` uses dsh's agent-message
+   * relay framing, which dsh-TUI shows as a bubble labelled with the sender;
+   * `notice` is a plain plugin notice the model sees and the TUI does not.
+   */
+  display?: Display
   /** Collect messages arriving within this window into one delivery. */
   batchMs?: number
   /** Show a TUI toast for each delivery when dsh-TUI is present. */
@@ -39,6 +47,7 @@ export const Config: Schemastery<Config> = z.object({
   team: z.string().default('').description('Team to join on session start (requires name).'),
   name: z.string().default('').description('Agent name to join the team as on session start.'),
   delivery: z.union(['wake', 'inject', 'off']).default('wake').description('Inbound delivery: wake, inject, or off.'),
+  display: z.union(['relay', 'notice']).default('relay').description('relay shows inbound messages in the dsh-TUI transcript; notice keeps them model-only.'),
   batchMs: z.natural().default(400).description('Window (ms) for batching messages into one delivery.'),
   notify: z.boolean().default(true).description('Show a dsh-TUI toast when messages arrive.'),
   statusLine: z.boolean().default(true).description('Show the agmsg identity in the dsh-TUI status line.'),
@@ -52,6 +61,7 @@ export function resolveConfig(config: Config = {}): ResolvedConfig {
     team: config.team ?? '',
     name: config.name ?? '',
     delivery: config.delivery ?? 'wake',
+    display: config.display ?? 'relay',
     batchMs: config.batchMs ?? 400,
     notify: config.notify ?? true,
     statusLine: config.statusLine ?? true,

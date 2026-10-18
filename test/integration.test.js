@@ -110,9 +110,11 @@ test('bridge streams a message into the session agent with its exact body', { sk
     assert.equal(received[0].via, 'followup')
     const message = received[0].message
     assert.equal(message.role, 'user')
-    assert.equal(message.source.kind, 'agmsg')
-    assert.match(message.content[0].text, /From carol \(team btest,/)
-    assert.ok(message.content[0].text.includes(body), 'exact body is delivered')
+    // Default display is the relay framing dsh-TUI renders as a sender bubble.
+    assert.equal(message.source.kind, 'agent-message')
+    assert.equal(message.content[0].text, 'Team message from carol (agmsg btest):')
+    assert.match(message.content[1].text, /From carol \(team btest,/)
+    assert.ok(message.content[1].text.includes(body), 'exact body is delivered')
     assert.equal(toasts.length, 1)
     assert.equal(bridge.info(agent.session.id)?.delivered, 1)
 

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 import { parseJsonl, parseWhoami } from '../lib/agmsg.js'
+import { deliveryMessage } from '../lib/bridge.js'
 import { formatDelivery, preview } from '../lib/format.js'
 import { escapeBody, LineSplitter, parseWatchLine, unescapeBody } from '../lib/watch-line.js'
 
@@ -51,4 +52,20 @@ test('formatDelivery names sender, team and how to reply', () => {
   assert.equal(formatDelivery([]), '')
   assert.equal(preview('a\n  b'), 'a b')
   assert.equal(preview('x'.repeat(100), 10).length, 10)
+})
+
+test('deliveryMessage frames a relay the way dsh-TUI labels team messages', () => {
+  const messages = [{ team: 't', from: 'alice', to: 'bob', at: 'T1', body: 'hi' }]
+  const relay = deliveryMessage(messages, 'relay')
+  assert.equal(relay.role, 'user')
+  assert.deepEqual(relay.source, { kind: 'agent-message', form: 'relay', senderSessionId: 'agmsg:t/alice' })
+  assert.match(relay.content[0].text, /^Team message from ([^\n]+):$/)
+  assert.equal(relay.content[0].text, 'Team message from alice (agmsg t):')
+  assert.match(relay.content[1].text, /From alice \(team t, T1\):\nhi/)
+  assert.ok(Object.isFrozen(relay) && Object.isFrozen(relay.content[0]))
+
+  const notice = deliveryMessage(messages, 'notice')
+  assert.deepEqual(notice.source, { kind: 'agmsg', form: 'notice', summary: 'agmsg: message from alice' })
+  assert.equal(notice.content.length, 1)
+  assert.notEqual(notice.id, relay.id)
 })
