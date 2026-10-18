@@ -36,6 +36,7 @@
     "lib",
     "skills",
     "agmsg-type",
+    "scripts",
     "cordis.patch.yml",
     "README.md"
   ],
@@ -51,7 +52,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test test/",
+    "test": "node --test \"test/*.test.js\"",
     "check": "npm run build && npm test"
   },
   "dependencies": {

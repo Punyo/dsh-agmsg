@@ -1,0 +1,13 @@
+# dsh-agmsg bundle patch: one host row. The row name must equal the package
+# name so the profile resolves it from its own node_modules.
+#
+# Every config key has a default; override them in the profile's own
+# cordis.patch.yml with an `- id: dsh-agmsg` row that restates the whole
+# config block (an override replaces the row's config).
+- insert:
+    - id: dsh-agmsg
+      name: 'dsh-agmsg'
+      config:
+        agmsgHome: ''
+        autoAttach: true
+        delivery: wake
