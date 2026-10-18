@@ -49,7 +49,9 @@ export function createCommand(bridge: Bridge): CommandDefinition {
       if (sub === 'setup') {
         if (!client.installed()) return fail(notInstalled(client.home))
         const result = await runInstaller(client.home)
-        return result.code === 0 ? ok(oneLine(result.output)) : fail(oneLine(result.output))
+        // The installer prints its verdict last; lead with it on the one line.
+        const summary = oneLine(result.output.split('\n').reverse().join('\n'))
+        return result.code === 0 ? ok(summary) : fail(summary)
       }
       if (!client.installed()) return fail(notInstalled(client.home))
 
