@@ -29,6 +29,13 @@ export interface BridgeHost {
 }
 export declare function projectOf(agent: Agent): string;
 /**
+ * The instance id a seat's watcher claims its roles under: the agmsg session
+ * key plus this dsh process's pid. The pid is the process, not the watcher, so
+ * the claim outlives any single watcher — which is exactly why the bridge has
+ * to hand its roles back instead of relying on the claim dying with the child.
+ */
+export declare function instanceToken(sessionId: string): string;
+/**
  * Build the user message for one delivery batch.
  *
  * `relay` borrows dsh's adjacent-agent relay attribution (`agent-message` /
@@ -43,6 +50,13 @@ export declare class Bridge {
     readonly config: ResolvedConfig;
     private readonly host;
     private readonly seats;
+    /**
+     * Hand-backs in flight, keyed by (token, team, name). A role that is claimed
+     * again before its release runs cancels that release: detach-then-rejoin
+     * hands the same role to a fresh watcher of the same session, and removing
+     * the claim afterwards would take the role away from it.
+     */
+    private readonly pendingReleases;
     private disposed;
     constructor(client: AgmsgClient, config: ResolvedConfig, host: BridgeHost);
     info(sessionId: string): SeatInfo | undefined;
@@ -70,6 +84,17 @@ export declare class Bridge {
     join(agent: Agent, team: string, name: string): Promise<string>;
     /** Stop delivery for a session and forget its seat (registration stays). */
     detach(sessionId: string): boolean;
+    /**
+     * Give this session's claim on a role back, and stop serving it.
+     *
+     * The recovery path for a claim that outlived its watcher: releasing works
+     * only for the recorded owner, which is the session that left it behind. A
+     * role another live session holds is left alone — dropping that one is its
+     * session's business, not ours.
+     */
+    drop(agent: Agent, name?: string): Promise<string>;
+    /** Hand one (team, role) pair back, e.g. after `leave` dropped the membership. */
+    release(sessionId: string, team: string, name: string): Promise<void>;
     /** Restart a seat's watcher, e.g. after a failure was fixed. */
     restart(sessionId: string): boolean;
     dispose(): void;
@@ -80,6 +105,18 @@ export declare class Bridge {
      */
     private startWatcher;
     private spawnWatcher;
+    /** Detach the seat and stop its watcher, returning the child that was killed. */
+    private stopSeat;
+    /**
+     * Hand a seat's roles back once its watcher is really gone.
+     *
+     * Nothing here can reach a claim made by a watcher of this same session that
+     * replaced this seat (see `pendingReleases`), and a release that fails only
+     * costs the role its place in the pool — the claim still disappears with the
+     * dsh process, so this is not retried.
+     */
+    private releaseSeat;
+    private cancelRelease;
     private stopWatcher;
     private onLine;
     private onStderr;

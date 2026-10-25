@@ -3,7 +3,7 @@
 // into a temp directory, so no real team or message store is touched.
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { cpSync, existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { after, before, test } from 'node:test'
@@ -155,5 +155,63 @@ test('a second session cannot hold the same identity at once', { skip }, async (
   } finally {
     a.dispose()
     b.dispose()
+  }
+})
+
+function hostFor(fake) {
+  return {
+    log: silentLogger(),
+    agent: () => fake.agent,
+    detached: op => op(),
+    notify: () => {},
+    setStatus: () => false,
+  }
+}
+
+function actasLocks() {
+  return readdirSync(join(home, 'run')).filter(name => name.startsWith('actas.') && name.endsWith('.session'))
+}
+
+test('a role switched away from is handed back, not left claimed by the process', { skip }, async () => {
+  const client = new AgmsgClient({ home })
+  const first = fakeAgent('01SESSIONHANDOVER')
+  const second = fakeAgent('01SESSIONHANDOVER2')
+  const a = new Bridge(client, resolveConfig({}), hostFor(first))
+  try {
+    await a.join(first.agent, 'htest', 'frank')
+    await waitFor(() => a.info(first.agent.session.id)?.state === 'watching')
+    const before = actasLocks().length
+    // Same session, new name: the old role must not stay claimed by this
+    // process, which outlives the watcher that claimed it.
+    await a.join(first.agent, 'htest', 'gina')
+    await waitFor(() => a.info(first.agent.session.id)?.state === 'watching')
+    await waitFor(() => actasLocks().length === before)
+  } finally {
+    a.dispose()
+  }
+  const b = new Bridge(client, resolveConfig({}), hostFor(second))
+  try {
+    await b.attachExisting(second.agent, 'frank')
+    await waitFor(() => b.info(second.agent.session.id)?.state === 'watching')
+    assert.equal(b.info(second.agent.session.id)?.name, 'frank')
+  } finally {
+    b.dispose()
+  }
+})
+
+test('drop hands the role back and forgets the seat', { skip }, async () => {
+  const client = new AgmsgClient({ home })
+  const fake = fakeAgent('01SESSIONDROP')
+  const bridge = new Bridge(client, resolveConfig({}), hostFor(fake))
+  try {
+    await bridge.join(fake.agent, 'dtest', 'heidi')
+    await waitFor(() => bridge.info(fake.agent.session.id)?.state === 'watching')
+    const before = actasLocks().length
+    const output = await bridge.drop(fake.agent)
+    assert.match(output, /heidi released/)
+    assert.equal(bridge.info(fake.agent.session.id), undefined)
+    await waitFor(() => actasLocks().length === before - 1)
+  } finally {
+    bridge.dispose()
   }
 })

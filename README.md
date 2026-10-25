@@ -88,6 +88,7 @@ The plugin also registers a bundled `dsh-agmsg` skill that explains the workflow
 | `/agmsg join <team> <name>` | Join and start receiving |
 | `/agmsg attach [name]` | Re-attach this project's identity, or restart delivery |
 | `/agmsg detach` | Stop receiving in this session; the membership stays |
+| `/agmsg drop [name]` | Hand this session's claim on a role back, so another session can take it |
 | `/agmsg send <to\|team:to> <message>` | Send as this session's identity |
 | `/agmsg inbox` / `history [n]` / `members [team]` | Read state and roster |
 | `/agmsg leave [team]` | Leave a team; this removes the agent name from it |
@@ -127,6 +128,7 @@ Every option has a default. To override them, add a row to your profile's `cordi
   - `AGMSG_RESOLVE_PROJECT=0`, so the session's cwd is used as the project as-is.
 - **Delivery**:
   - Each joined root session owns one `watch.sh <sid>.<pid> <cwd> dsh <name>`. The `<pid>` part makes the watcher exit together with dsh.
+  - `watch.sh` claims the role's actas lock under that same `<sid>.<pid>` and does not release it when it exits. Because the pid belongs to dsh, a claim left behind outlives the watcher and reads as "held by another session" for as long as the process runs. The plugin therefore hands the role back itself — after the watcher has exited — whenever a seat is dropped, detached, or replaced by a different name. `/agmsg drop [name]` releases a claim that outlived its watcher.
   - `watch.sh` advances agmsg's read cursor, which it shares with `inbox.sh`. The watcher's line encoding loses information, so the plugin fetches the exact body from `api.sh` before delivering.
   - If a watcher stops, it is restarted with backoff. After repeated failures the seat is marked failed and `/agmsg attach` retries.
 - **Display**: dsh-TUI keeps plugin-sourced user messages out of the transcript. The default `relay` display uses dsh's adjacent-agent relay attribution (`agent-message` / `relay`) with a leading `Team message from <sender>:` block, which dsh-TUI renders as a labelled bubble. The sender id is a synthetic `agmsg:<team>/<name>`.
@@ -143,6 +145,7 @@ Every option has a default. To override them, add a row to your profile's `cordi
 
 - **`Unknown agent type: 'dsh'`**: run `/agmsg setup` for the agmsg install the plugin uses (`agmsgHome`).
 - **Nothing arrives**: run `/agmsg`. A state other than `receiving` comes with a reason; for example, the identity is held by another session.
+- **"cannot claim (held by other sessions)" for a role nobody is receiving**: a claim that outlived its watcher. Run `/agmsg drop <name>` in the session that last held it; the role is then free for another session. The plugin now releases roles itself, so this only affects claims left by an earlier version.
 - **Debug log**: start dsh with `DSH_AGMSG_DEBUG=/path/to/file` to mirror the plugin's log to that file.
 
 ## Development

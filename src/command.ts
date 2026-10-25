@@ -12,7 +12,7 @@ import { notInstalled, oneLine, seatLine, unknownTypeHint } from './text.js'
 
 const INSTALLER = fileURLToPath(new URL('../scripts/install-agmsg-type.sh', import.meta.url))
 
-const USAGE = '/agmsg [status] · setup · join <team> <name> · attach [name] · detach · send <to|team:to> <message> · inbox · members [team] · history [limit] · leave [team]'
+const USAGE = '/agmsg [status] · setup · join <team> <name> · attach [name] · detach · drop [name] · send <to|team:to> <message> · inbox · members [team] · history [limit] · leave [team]'
 
 function ok(text: string): CommandResult {
   return { kind: 'success', text }
@@ -35,7 +35,7 @@ export function createCommand(bridge: Bridge): CommandDefinition {
   return {
     name: 'agmsg',
     description: 'agmsg team messaging: status, setup, join, send, inbox, members, history',
-    input: { hint: 'status|setup|join <team> <name>|attach|detach|send <to> <message>|inbox|members|history|leave|help' },
+    input: { hint: 'status|setup|join <team> <name>|attach|detach|drop [name]|send <to> <message>|inbox|members|history|leave|help' },
     async handler({ agent, rawInput }) {
       const input = rawInput.trim()
       const space = input.search(/\s/)
@@ -79,6 +79,8 @@ export function createCommand(bridge: Bridge): CommandDefinition {
           }
           case 'detach':
             return bridge.detach(sessionId) ? ok('agmsg: stopped delivery for this session') : fail('agmsg: this session is not attached')
+          case 'drop':
+            return ok(`agmsg: ${oneLine(await bridge.drop(agent, words[0]))}`)
           case 'send': {
             if (words.length < 2) return fail('usage: /agmsg send <to> <message>')
             const target = words[0]!
@@ -112,6 +114,7 @@ export function createCommand(bridge: Bridge): CommandDefinition {
           case 'leave': {
             const { name, team } = bridge.teamFor(sessionId, words[0])
             const output = await client.leave(team, name)
+            await bridge.release(sessionId, team, name)
             const seat = bridge.info(sessionId)
             if (seat !== undefined && seat.teams.length <= 1) bridge.detach(sessionId)
             else if (seat !== undefined) await bridge.attachExisting(agent, name)

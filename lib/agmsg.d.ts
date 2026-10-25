@@ -85,6 +85,9 @@ export declare class AgmsgClient {
         input?: string;
         signal?: AbortSignal;
     }): Promise<ScriptResult>;
+    /** Run a bash snippet with `$1..` bound to `args`. */
+    private bash;
+    private exec;
     private ok;
     whoami(project: string): Promise<Whoami>;
     /** Every (team, agent) registered for this project as a dsh agent. */
@@ -96,6 +99,20 @@ export declare class AgmsgClient {
     leave(team: string, name: string): Promise<string>;
     /** Remove only this (project, dsh) registration of `name`. */
     reset(project: string, name: string, sessionId: string): Promise<string>;
+    /**
+     * Hand this instance's actas claims on the given roles back to the pool.
+     *
+     * `watch.sh` claims a per-(team, agent) lock when it starts and does not
+     * release one when it exits. The claim names `<sid>.<pid>`, and the pid is
+     * this dsh process, which outlives every watcher: without an explicit
+     * release the role reads as "held by another session" for as long as dsh
+     * runs, and no peer can claim it. Release is owner-checked inside agmsg, so
+     * a pair this instance does not own is left exactly as found.
+     */
+    releaseRoles(token: string, pairs: ReadonlyArray<{
+        team: string;
+        agent: string;
+    }>): Promise<void>;
     send(team: string, from: string, to: string, body: string): Promise<string>;
     /** `inbox.sh` output; it marks the shown messages read. */
     inbox(team: string, name: string): Promise<string>;
@@ -105,8 +122,9 @@ export declare class AgmsgClient {
     /** Most recent messages to or from `name`, oldest first, with exact bodies. */
     messages(team: string, name: string, limit: number): Promise<StoredMessage[]>;
     /**
-     * Start `watch.sh` for one seat. The instance id `<sid>.<pid>` makes the
-     * watcher exit with this process and marks its actas lock live.
+     * Start `watch.sh` for one seat. `token` is the instance id `<sid>.<pid>`
+     * that the watcher claims its roles under, and that `releaseRoles` later
+     * matches; the bridge computes it once so both sides agree.
      */
-    watch(sessionKey: string, project: string, name: string): ChildProcess;
+    watch(token: string, project: string, name: string): ChildProcess;
 }

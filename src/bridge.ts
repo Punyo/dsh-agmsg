@@ -32,6 +32,7 @@ export interface SeatInfo {
 interface Seat {
   readonly sessionId: string
   readonly project: string
+  readonly token: string
   agent: Agent
   name: string
   teams: string[]
@@ -63,9 +64,43 @@ export interface BridgeHost {
 const MAX_FAILURES = 6
 /** A watcher alive this long is considered healthy. */
 const HEALTHY_AFTER_MS = 2_000
+/** How long a hand-back waits for the watcher it belongs to to exit. */
+const RELEASE_EXIT_TIMEOUT_MS = 5_000
 
 export function projectOf(agent: Agent): string {
   return agent.session.header.cwd ?? process.cwd()
+}
+
+/**
+ * The instance id a seat's watcher claims its roles under: the agmsg session
+ * key plus this dsh process's pid. The pid is the process, not the watcher, so
+ * the claim outlives any single watcher — which is exactly why the bridge has
+ * to hand its roles back instead of relying on the claim dying with the child.
+ */
+export function instanceToken(sessionId: string): string {
+  return `dsh-${sessionId.replace(/[^A-Za-z0-9_-]/g, '')}.${process.pid}`
+}
+
+function releaseKey(token: string, team: string, name: string): string {
+  return `${token}\0${team}\0${name}`
+}
+
+/**
+ * Resolve once the child has exited, or after `timeoutMs`. A watcher killed
+ * while it was still starting can claim its lock after the signal, so the
+ * hand-back waits for the exit rather than racing it.
+ */
+function waitForExit(child: ChildProcess | undefined, timeoutMs = RELEASE_EXIT_TIMEOUT_MS): Promise<void> {
+  if (child === undefined || child.exitCode !== null || child.signalCode !== null) return Promise.resolve()
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      clearTimeout(timer)
+      child.off('exit', finish)
+      resolve()
+    }
+    const timer = setTimeout(finish, timeoutMs)
+    child.once('exit', finish)
+  })
 }
 
 function freezeMessage(texts: readonly string[], source: UserMessage['source']): UserMessage {
@@ -110,6 +145,13 @@ export function deliveryMessage(messages: readonly InboundMessage[], display: 'r
 
 export class Bridge {
   private readonly seats = new Map<string, Seat>()
+  /**
+   * Hand-backs in flight, keyed by (token, team, name). A role that is claimed
+   * again before its release runs cancels that release: detach-then-rejoin
+   * hands the same role to a fresh watcher of the same session, and removing
+   * the claim afterwards would take the role away from it.
+   */
+  private readonly pendingReleases = new Map<string, object>()
   private disposed = false
 
   constructor(
@@ -217,14 +259,52 @@ export class Bridge {
 
   /** Stop delivery for a session and forget its seat (registration stays). */
   detach(sessionId: string): boolean {
-    const seat = this.seats.get(sessionId)
-    if (seat === undefined) return false
-    this.seats.delete(sessionId)
-    this.stopWatcher(seat)
-    seat.state = 'stopped'
-    clearTimeout(seat.flushTimer)
+    const stopped = this.stopSeat(sessionId)
+    if (stopped === undefined) return false
+    this.releaseSeat(stopped.seat, stopped.child)
     this.updateStatus()
     return true
+  }
+
+  /**
+   * Give this session's claim on a role back, and stop serving it.
+   *
+   * The recovery path for a claim that outlived its watcher: releasing works
+   * only for the recorded owner, which is the session that left it behind. A
+   * role another live session holds is left alone — dropping that one is its
+   * session's business, not ours.
+   */
+  async drop(agent: Agent, name?: string): Promise<string> {
+    const sessionId = agent.session.id
+    const seat = this.seats.get(sessionId)
+    const target = name !== undefined && name !== '' ? name : seat?.name
+    if (target === undefined) {
+      throw new Error('this session is not attached; pass the role name: /agmsg drop <name>')
+    }
+    const current = seat !== undefined && seat.name === target ? seat : undefined
+    const teams = current !== undefined
+      ? [...current.teams]
+      : [...new Set((await this.client.identities(projectOf(agent))).filter(row => row.agent === target).map(row => row.team))]
+    const pairs = teams.map(team => ({ team, agent: target }))
+    const token = current?.token ?? instanceToken(sessionId)
+    const stopped = current === undefined ? undefined : this.stopSeat(sessionId)
+    if (stopped !== undefined) {
+      await waitForExit(stopped.child)
+      this.cancelRelease(token, target, teams)
+    }
+    await this.client.releaseRoles(token, pairs)
+    this.updateStatus()
+    return pairs.length === 0
+      ? `${target} is not registered for this project; nothing to release`
+      : `${target} released in ${teams.join(', ')}; the role is free for another session`
+  }
+
+  /** Hand one (team, role) pair back, e.g. after `leave` dropped the membership. */
+  async release(sessionId: string, team: string, name: string): Promise<void> {
+    if (team === '' || name === '') return
+    const token = instanceToken(sessionId)
+    this.cancelRelease(token, name, [team])
+    await this.client.releaseRoles(token, [{ team, agent: name }])
   }
 
   /** Restart a seat's watcher, e.g. after a failure was fixed. */
@@ -258,6 +338,7 @@ export class Bridge {
     const seat: Seat = {
       sessionId,
       project: projectOf(agent),
+      token: instanceToken(sessionId),
       agent,
       name,
       teams,
@@ -284,8 +365,12 @@ export class Bridge {
   private spawnWatcher(seat: Seat): void {
     if (this.disposed || this.seats.get(seat.sessionId) !== seat) return
     clearTimeout(seat.retryTimer)
-    const key = `dsh-${seat.sessionId.replace(/[^A-Za-z0-9_-]/g, '')}`
-    const child = this.client.watch(key, seat.project, seat.name)
+    // A watcher carries its own diagnosis; the previous one's is stale.
+    seat.detail = undefined
+    // This seat is claiming its roles again, so a hand-back queued for them
+    // must not run after the claim.
+    this.cancelRelease(seat.token, seat.name, seat.teams)
+    const child = this.client.watch(seat.token, seat.project, seat.name)
     seat.watcher = child
     seat.state = 'starting'
     const stdout = new LineSplitter()
@@ -316,12 +401,56 @@ export class Bridge {
     this.updateStatus()
   }
 
-  private stopWatcher(seat: Seat): void {
+  /** Detach the seat and stop its watcher, returning the child that was killed. */
+  private stopSeat(sessionId: string): { seat: Seat, child: ChildProcess | undefined } | undefined {
+    const seat = this.seats.get(sessionId)
+    if (seat === undefined) return undefined
+    this.seats.delete(sessionId)
+    const child = this.stopWatcher(seat)
+    seat.state = 'stopped'
+    clearTimeout(seat.flushTimer)
+    return { seat, child }
+  }
+
+  /**
+   * Hand a seat's roles back once its watcher is really gone.
+   *
+   * Nothing here can reach a claim made by a watcher of this same session that
+   * replaced this seat (see `pendingReleases`), and a release that fails only
+   * costs the role its place in the pool — the claim still disappears with the
+   * dsh process, so this is not retried.
+   */
+  private releaseSeat(seat: Seat, child: ChildProcess | undefined): void {
+    const keys = seat.teams.map(team => releaseKey(seat.token, team, seat.name))
+    if (keys.length === 0) return
+    const entry = {}
+    for (const key of keys) this.pendingReleases.set(key, entry)
+    const pairs = seat.teams.map(team => ({ team, agent: seat.name }))
+    this.host.detached(() => {
+      void waitForExit(child)
+        .then(async () => {
+          if (keys.some(key => this.pendingReleases.get(key) !== entry)) return
+          for (const key of keys) this.pendingReleases.delete(key)
+          await this.client.releaseRoles(seat.token, pairs)
+        })
+        .catch((error: unknown) => {
+          for (const key of keys) this.pendingReleases.delete(key)
+          this.host.log.warn('agmsg: could not release %s (%s): %s', seat.name, seat.teams.join(', '), (error as Error).message)
+        })
+    })
+  }
+
+  private cancelRelease(token: string, name: string, teams: readonly string[]): void {
+    for (const team of teams) this.pendingReleases.delete(releaseKey(token, team, name))
+  }
+
+  private stopWatcher(seat: Seat): ChildProcess | undefined {
     clearTimeout(seat.retryTimer)
     clearTimeout(seat.healthyTimer)
     const child = seat.watcher
     seat.watcher = undefined
     if (child !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+    return child
   }
 
   private onLine(seat: Seat, line: string): void {

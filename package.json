@@ -1,6 +1,6 @@
 {
   "name": "dsh-agmsg",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "agmsg bridge for DeepSeek Harness (dsh) and dsh-TUI: join an agmsg team and exchange messages with Claude Code, Codex and other agents.",
   "keywords": [
     "deepseek-harness",

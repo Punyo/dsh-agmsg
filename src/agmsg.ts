@@ -151,8 +151,17 @@ export class AgmsgClient {
 
   /** Run one script to completion. Never rejects; inspect `code`. */
   run(script: string, args: readonly string[], options: { input?: string, signal?: AbortSignal } = {}): Promise<ScriptResult> {
+    return this.exec([join(this.scripts, script), ...args], options)
+  }
+
+  /** Run a bash snippet with `$1..` bound to `args`. */
+  private bash(code: string, args: readonly string[]): Promise<ScriptResult> {
+    return this.exec(['-c', code, 'agmsg', ...args])
+  }
+
+  private exec(argv: readonly string[], options: { input?: string, signal?: AbortSignal } = {}): Promise<ScriptResult> {
     return new Promise((resolve) => {
-      const child = execFile('bash', [join(this.scripts, script), ...args], {
+      const child = execFile('bash', [...argv], {
         env: this.env(),
         timeout: this.timeoutMs,
         maxBuffer: 8 * 1024 * 1024,
@@ -202,6 +211,27 @@ export class AgmsgClient {
     return (await this.ok('reset.sh', [project, AGENT_TYPE, name, sessionId])).trim()
   }
 
+  /**
+   * Hand this instance's actas claims on the given roles back to the pool.
+   *
+   * `watch.sh` claims a per-(team, agent) lock when it starts and does not
+   * release one when it exits. The claim names `<sid>.<pid>`, and the pid is
+   * this dsh process, which outlives every watcher: without an explicit
+   * release the role reads as "held by another session" for as long as dsh
+   * runs, and no peer can claim it. Release is owner-checked inside agmsg, so
+   * a pair this instance does not own is left exactly as found.
+   */
+  async releaseRoles(token: string, pairs: ReadonlyArray<{ team: string, agent: string }>): Promise<void> {
+    if (pairs.length === 0) return
+    const code = 'SKILL_DIR="$1"; token="$2"; shift 2; . "$SKILL_DIR/scripts/lib/actas-lock.sh"; '
+      + 'while [ "$#" -ge 2 ]; do actas_lock_release "$1" "$2" "$token" || true; shift 2; done'
+    const result = await this.bash(code, [this.home, token, ...pairs.flatMap(pair => [pair.team, pair.agent])])
+    if (result.code !== 0) {
+      const detail = (result.stderr.trim() || `exit ${result.code}`).split('\n').slice(-3).join(' ')
+      throw new AgmsgError(`actas lock release failed: ${detail}`, result)
+    }
+  }
+
   async send(team: string, from: string, to: string, body: string): Promise<string> {
     if (body.trim() === '') throw new AgmsgError('message body is empty')
     return (await this.ok('send.sh', [team, from, to, '--body', '-'], { input: body })).trim()
@@ -232,11 +262,12 @@ export class AgmsgClient {
   }
 
   /**
-   * Start `watch.sh` for one seat. The instance id `<sid>.<pid>` makes the
-   * watcher exit with this process and marks its actas lock live.
+   * Start `watch.sh` for one seat. `token` is the instance id `<sid>.<pid>`
+   * that the watcher claims its roles under, and that `releaseRoles` later
+   * matches; the bridge computes it once so both sides agree.
    */
-  watch(sessionKey: string, project: string, name: string): ChildProcess {
-    return spawn('bash', [join(this.scripts, 'watch.sh'), `${sessionKey}.${process.pid}`, project, AGENT_TYPE, name], {
+  watch(token: string, project: string, name: string): ChildProcess {
+    return spawn('bash', [join(this.scripts, 'watch.sh'), token, project, AGENT_TYPE, name], {
       env: this.env(),
       stdio: ['ignore', 'pipe', 'pipe'],
     })
