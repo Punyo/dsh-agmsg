@@ -2,7 +2,7 @@ import z from '@deepseek-ai/schemastery'
 
 export type Delivery = 'wake' | 'inject' | 'off'
 
-export type Display = 'relay' | 'notice'
+export type Display = 'relay' | 'notice' | 'user'
 
 /** Plugin configuration; every key has a default so a bare row works. */
 export interface Config {
@@ -25,7 +25,8 @@ export interface Config {
   /**
    * How a delivered message is attributed. `relay` uses dsh's agent-message
    * relay framing, which dsh-TUI shows as a bubble labelled with the sender;
-   * `notice` is a plain plugin notice the model sees and the TUI does not.
+   * `notice` is a plain plugin notice the model sees and the TUI does not;
+   * `user` opts into human-input attribution, retaining provenance in text.
    */
   display?: Display
   /** Collect messages arriving within this window into one delivery. */
@@ -47,7 +48,7 @@ export const Config: Schemastery<Config> = z.object({
   team: z.string().default('').description('Team to join on session start (requires name).'),
   name: z.string().default('').description('Agent name to join the team as on session start.'),
   delivery: z.union(['wake', 'inject', 'off']).default('wake').description('Inbound delivery: wake, inject, or off.'),
-  display: z.union(['relay', 'notice']).default('relay').description('relay shows inbound messages in the dsh-TUI transcript; notice keeps them model-only.'),
+  display: z.union(['relay', 'notice', 'user']).default('relay').description('relay labels senders; notice is model-only; user attributes inbound messages as human input.'),
   batchMs: z.natural().default(400).description('Window (ms) for batching messages into one delivery.'),
   notify: z.boolean().default(true).description('Show a dsh-TUI toast when messages arrive.'),
   statusLine: z.boolean().default(true).description('Show the agmsg identity in the dsh-TUI status line.'),

@@ -1,5 +1,5 @@
 import { AgmsgClient } from './agmsg.js';
-import type { ResolvedConfig } from './config.js';
+import type { Display, ResolvedConfig } from './config.js';
 import { type InboundMessage } from './format.js';
 export type { InboundMessage };
 import { type Agent, type Logger, type UserMessage } from './host.js';
@@ -42,9 +42,10 @@ export declare function instanceToken(sessionId: string): string;
  * `relay`) with a leading `Team message from <label>:` block, the shape
  * dsh-TUI renders as a labelled bubble; the sender id is a synthetic
  * `agmsg:<team>/<name>` because the sender is not a dsh session. `notice` is
- * a plugin-owned source that dsh-TUI keeps out of the transcript.
+ * a plugin-owned source that dsh-TUI keeps out of the transcript. `user`
+ * opts into human-input attribution without removing the agmsg disclosure.
  */
-export declare function deliveryMessage(messages: readonly InboundMessage[], display: 'relay' | 'notice'): UserMessage;
+export declare function deliveryMessage(messages: readonly InboundMessage[], display: Display): UserMessage;
 export declare class Bridge {
     readonly client: AgmsgClient;
     readonly config: ResolvedConfig;

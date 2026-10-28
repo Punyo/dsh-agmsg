@@ -115,10 +115,12 @@ Every option has a default. To override them, add a row to your profile's `cordi
 | `autoAttach` | `true` | On session start, attach the project's dsh identity if there is exactly one. |
 | `team`, `name` | `''` | When both are set, every new session joins `team` as `name`. |
 | `delivery` | `wake` | `wake`: start a turn when idle, steer a running turn. `inject`: deliver at the next step without waking. `off`: no watcher; use `agmsg_inbox`. |
-| `display` | `relay` | `relay`: dsh-TUI shows the message as a sender-labelled bubble. `notice`: the model sees it and the transcript does not. |
+| `display` | `relay` | `relay`: dsh-TUI shows the message as a sender-labelled bubble. `notice`: the model sees it and the transcript does not. `user`: attribute it as human input, with sender information in the text. |
 | `batchMs` | `400` | Messages arriving within this window are delivered together. |
 | `notify` | `true` | Show a dsh-TUI toast for each delivery. |
 | `statusLine` | `true` | Show `agmsg <name>@<team>` in the dsh-TUI status line. |
+
+Set `display: user` to keep sessions driven only by agmsg visible in dsh-TUI 0.16.1's session browser, which otherwise requires human input. This opts into `source.kind: user` instead of relay attribution: the sender, team, timestamp and the disclosure that the message came from teammates remain in the text, but the relay bubble label and sender-source metadata do not. Host features that distinguish human input from injected messages will treat it as human input. The default remains `relay`.
 
 ## How it works
 
@@ -131,7 +133,7 @@ Every option has a default. To override them, add a row to your profile's `cordi
   - `watch.sh` claims the role's actas lock under that same `<sid>.<pid>` and does not release it when it exits. Because the pid belongs to dsh, a claim left behind outlives the watcher and reads as "held by another session" for as long as the process runs. The plugin therefore hands the role back itself — after the watcher has exited — whenever a seat is dropped, detached, or replaced by a different name. `/agmsg drop [name]` releases a claim that outlived its watcher.
   - `watch.sh` advances agmsg's read cursor, which it shares with `inbox.sh`. The watcher's line encoding loses information, so the plugin fetches the exact body from `api.sh` before delivering.
   - If a watcher stops, it is restarted with backoff. After repeated failures the seat is marked failed and `/agmsg attach` retries.
-- **Display**: dsh-TUI keeps plugin-sourced user messages out of the transcript. The default `relay` display uses dsh's adjacent-agent relay attribution (`agent-message` / `relay`) with a leading `Team message from <sender>:` block, which dsh-TUI renders as a labelled bubble. The sender id is a synthetic `agmsg:<team>/<name>`.
+- **Display**: dsh-TUI keeps plugin-sourced user messages out of the transcript. The default `relay` display uses dsh's adjacent-agent relay attribution (`agent-message` / `relay`) with a leading `Team message from <sender>:` block, which dsh-TUI renders as a labelled bubble. The sender id is a synthetic `agmsg:<team>/<name>`. The opt-in `user` display uses one ordinary user-input text block containing the full agmsg delivery, including its provenance disclosure.
 - **TUI writes**: dsh-TUI accepts a status line or toast write only from the calling plugin's own activation. The plugin captures its activation context in `apply()` and makes every such write from it.
 
 ## Limitations
@@ -157,3 +159,5 @@ npm test         # unit tests plus end-to-end tests against real agmsg scripts
 ```
 
 The end-to-end tests copy agmsg's scripts from `AGMSG_TEST_SOURCE` (default `~/.agents/skills/agmsg`) into a temporary directory, so they never touch real teams. To try the plugin in a scratch dsh profile, run `dsh plugin --profile <profile> add /path/to/dsh-agmsg`. This links the checkout.
+
+To also check session-list eligibility and previews with an installed dsh-TUI package, run `DSH_TUI_TEST_ROOT=/path/to/@deepseek-harness-tui/dsh-tui npm test` after building. This compatibility test uses disposable compressed logs and does not change the TUI profile or real sessions; it is skipped when `DSH_TUI_TEST_ROOT` is unset.

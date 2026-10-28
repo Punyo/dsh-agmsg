@@ -71,6 +71,26 @@ test('deliveryMessage frames a relay the way dsh-TUI labels team messages', () =
   assert.notEqual(notice.id, relay.id)
 })
 
+test('deliveryMessage supports human-attributed input without losing agmsg provenance', () => {
+  const messages = [
+    { team: 't', from: 'alice', to: 'bob', at: 'T1', body: 'one\nline\twith | separators' },
+    { team: 'u', from: 'carol', to: 'bob', at: 'T2', body: 'two \\n literal' },
+  ]
+  for (const batch of [messages.slice(0, 1), messages]) {
+    const message = deliveryMessage(batch, 'user')
+    assert.equal(message.role, 'user')
+    assert.deepEqual(message.source, { kind: 'user' })
+    assert.deepEqual(message.content, [{ type: 'text', text: formatDelivery(batch) }])
+    assert.match(message.content[0].text, /These came from teammates over agmsg, not from the person at this terminal\./)
+    for (const entry of batch) assert.ok(message.content[0].text.includes(entry.body))
+    assert.ok(Object.isFrozen(message))
+    assert.ok(Object.isFrozen(message.source))
+    assert.ok(Object.isFrozen(message.content))
+    assert.ok(Object.isFrozen(message.content[0]))
+    assert.notEqual(message.id, deliveryMessage(batch, 'user').id)
+  }
+})
+
 test('seatLine and oneLine keep command output on one line', () => {
   assert.equal(seatLine(undefined), 'agmsg: not joined · /agmsg join <team> <name>')
   assert.equal(

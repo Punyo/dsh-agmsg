@@ -133,6 +133,42 @@ test('bridge streams a message into the session agent with its exact body', { sk
   assert.equal(bridge.info(agent.session.id), undefined)
 })
 
+for (const { status, delivery, via } of [
+  { status: 'idle', delivery: 'wake', via: 'followup' },
+  { status: 'running', delivery: 'wake', via: 'steer' },
+  { status: 'idle', delivery: 'inject', via: 'inject' },
+]) {
+  test(`bridge delivers user-attributed messages through ${via}`, { skip }, async () => {
+    const client = new AgmsgClient({ home })
+    const fake = fakeAgent(`01SESSIONUSER${via.toUpperCase()}`)
+    fake.agent.status = status
+    const bridge = new Bridge(client, resolveConfig({ display: 'user', delivery, batchMs: 100 }), hostFor(fake))
+    const team = `utest${via}`
+    const sender = `sender-${via}`
+    const recipient = `recipient-${via}`
+    try {
+      await client.join(team, sender, project)
+      await bridge.join(fake.agent, team, recipient)
+      await waitFor(() => bridge.info(fake.agent.session.id)?.state === 'watching')
+      const body = 'user-attributed instruction\nwith a | pipe, a\ttab and \\n literal'
+      await client.send(team, sender, recipient, body)
+      await waitFor(() => fake.received.length > 0)
+      assert.equal(fake.received.length, 1)
+      const { message, via: actualVia } = fake.received[0]
+      assert.equal(actualVia, via)
+      assert.equal(message.role, 'user')
+      assert.deepEqual(message.source, { kind: 'user' })
+      assert.equal(message.content.length, 1)
+      assert.ok(message.content[0].text.includes(`From ${sender} (team ${team},`))
+      assert.ok(message.content[0].text.includes(body), 'exact body is delivered')
+      assert.match(message.content[0].text, /not from the person at this terminal/)
+      assert.equal(bridge.info(fake.agent.session.id)?.delivered, 1)
+    } finally {
+      bridge.dispose()
+    }
+  })
+}
+
 test('a second session cannot hold the same identity at once', { skip }, async () => {
   const client = new AgmsgClient({ home })
   const first = fakeAgent('01SESSIONFIRST')

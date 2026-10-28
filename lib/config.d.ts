@@ -1,5 +1,5 @@
 export type Delivery = 'wake' | 'inject' | 'off';
-export type Display = 'relay' | 'notice';
+export type Display = 'relay' | 'notice' | 'user';
 /** Plugin configuration; every key has a default so a bare row works. */
 export interface Config {
     /** agmsg install directory. Empty means `~/.agents/skills/agmsg`. */
@@ -21,7 +21,8 @@ export interface Config {
     /**
      * How a delivered message is attributed. `relay` uses dsh's agent-message
      * relay framing, which dsh-TUI shows as a bubble labelled with the sender;
-     * `notice` is a plain plugin notice the model sees and the TUI does not.
+     * `notice` is a plain plugin notice the model sees and the TUI does not;
+     * `user` opts into human-input attribution, retaining provenance in text.
      */
     display?: Display;
     /** Collect messages arriving within this window into one delivery. */

@@ -11,7 +11,7 @@
 import { randomUUID } from 'node:crypto'
 import type { ChildProcess } from 'node:child_process'
 import { AgmsgClient, type StoredMessage } from './agmsg.js'
-import type { ResolvedConfig } from './config.js'
+import type { Display, ResolvedConfig } from './config.js'
 import { formatDelivery, preview, type InboundMessage } from './format.js'
 export type { InboundMessage }
 import { isRootAgent, type Agent, type Logger, type UserMessage } from './host.js'
@@ -119,11 +119,13 @@ function freezeMessage(texts: readonly string[], source: UserMessage['source']):
  * `relay`) with a leading `Team message from <label>:` block, the shape
  * dsh-TUI renders as a labelled bubble; the sender id is a synthetic
  * `agmsg:<team>/<name>` because the sender is not a dsh session. `notice` is
- * a plugin-owned source that dsh-TUI keeps out of the transcript.
+ * a plugin-owned source that dsh-TUI keeps out of the transcript. `user`
+ * opts into human-input attribution without removing the agmsg disclosure.
  */
-export function deliveryMessage(messages: readonly InboundMessage[], display: 'relay' | 'notice'): UserMessage {
+export function deliveryMessage(messages: readonly InboundMessage[], display: Display): UserMessage {
   const first = messages[0]!
   const body = formatDelivery(messages)
+  if (display === 'user') return freezeMessage([body], { kind: 'user' })
   const senders = [...new Set(messages.map(message => message.from))]
   if (display === 'relay') {
     const label = `${senders.join(', ')} (agmsg ${[...new Set(messages.map(message => message.team))].join(', ')})`
